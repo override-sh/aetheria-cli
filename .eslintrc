@@ -1,6 +1,39 @@
 {
-  "extends": [
-    "oclif",
-    "oclif-typescript"
-  ]
+	"extends": [
+		"oclif",
+		"oclif-typescript"
+	],
+	"rules": {
+		"unicorn/*": "off",
+		"quotes": [
+			"error",
+			"double"
+		],
+		"indent": [
+			"error",
+			"tab"
+		],
+		"no-tabs": "off",
+		"semi": [
+			"error",
+			"always"
+		],
+		"object-curly-spacing": [
+			"error",
+			"always"
+		],
+		"array-bracket-spacing": [
+			"error",
+			"always"
+		],
+		"key-spacing": "off",
+		"no-mixed-spaces-and-tabs": "off",
+		"operator-linebreak": "off",
+		"arrow-parens": [
+			"error",
+			"always"
+		],
+		"camelcase": "off",
+		"no-trailing-spaces": "off"
+	}
 }
