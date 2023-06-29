@@ -4,7 +4,8 @@
 		"oclif-typescript"
 	],
 	"rules": {
-		"unicorn/*": "off",
+		"unicorn/no-useless-spread": "off",
+		"unicorn/no-array-for-each": "off",
 		"quotes": [
 			"error",
 			"double"
@@ -34,6 +35,7 @@
 			"always"
 		],
 		"camelcase": "off",
-		"no-trailing-spaces": "off"
+		"no-trailing-spaces": "off",
+		"no-negated-condition": "off"
 	}
 }

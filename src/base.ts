@@ -82,6 +82,15 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
 		return input;
 	}
 
+	public safeError(input: string | Error, ...others: any[]): void {
+		this.logger.error(
+			input instanceof Error
+				? `${input.message} ${others.map(() => "%s").join(" ")}`
+				: `${input} ${others.map(() => "%s").join(" ")}`,
+			...others,
+		);
+	}
+
 	public error(input: string | Error, ...others: any[]): never {
 		this.logger.error(
 			input instanceof Error
