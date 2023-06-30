@@ -28,6 +28,7 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 	};
 
 	protected target_package_json!: Record<string, string>;
+	protected tsconfig_paths!: Record<string, string>;
 
 	public async run(): Promise<any> {
 		if (!this.flags.tsconfig) {
@@ -66,6 +67,8 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 			this.warn(`Could not find dependency "${dependency}" in the base package.json or the local dependencies`);
 		});
 
+		await this.verifyCircularDependency(dependencies);
+
 		this.log("Writing dependencies to package.json");
 		await writeFile(
 			this.flags.target,
@@ -73,6 +76,48 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 				...this.target_package_json,
 				dependencies: raw_dependencies,
 			}, null, 4),
+		);
+	}
+
+	async verifyCircularDependency(dependencies: Set<string>) {
+		if (dependencies.has(this.target_package_json.name)) {
+			this.error(`Circular dependency detected, ${this.target_package_json.name} depends on itself`);
+		}
+
+		if (!this.flags.tsconfig) {
+			this.warn("No tsconfig.json provided, skipping circular dependency check for local dependencies");
+			return;
+		}
+
+		const tsconfig_dir = this.flags.tsconfig.replace("tsconfig.json", "");
+
+		await Promise.all(
+			Object.keys(this.tsconfig_paths).map(async (local_dependency) => {
+				if (!dependencies.has(local_dependency)) {
+					return;
+				}
+
+				const [ resolution_path ] = this.tsconfig_paths[local_dependency];
+
+				const pjson = JSON.parse(
+					await readFile(
+						resolve(
+							tsconfig_dir,
+							resolution_path.replace("/src", ""),
+							"package.json",
+						),
+						"utf-8",
+					),
+				);
+
+				if (!pjson.dependencies) {
+					return;
+				}
+
+				if (this.target_package_json.name in pjson.dependencies) {
+					this.error(`Circular dependency detected, ${this.target_package_json.name} depends on ${local_dependency} which depends on ${this.target_package_json.name}`);
+				}
+			}),
 		);
 	}
 
@@ -91,13 +136,13 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 
 		const tsconfig_dir = this.flags.tsconfig.replace("tsconfig.json", "");
 		const tsconfig = JSON.parse(await readFile(this.flags.tsconfig, "utf-8"));
-		const paths = tsconfig?.compilerOptions?.paths || {};
+		this.tsconfig_paths = tsconfig?.compilerOptions?.paths || {};
 
-		this.log(`Found ${Object.keys(paths).length} local dependencies, resolving versions`);
+		this.log(`Found ${Object.keys(this.tsconfig_paths).length} local dependencies, resolving versions`);
 
 		await Promise.all(
-			Object.keys(paths).map(async (path) => {
-				const [ resolution_path ] = paths[path];
+			Object.keys(this.tsconfig_paths).map(async (path) => {
+				const [ resolution_path ] = this.tsconfig_paths[path];
 
 				const pjson = JSON.parse(
 					await readFile(
