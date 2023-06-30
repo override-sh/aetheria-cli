@@ -6,6 +6,9 @@
 	"rules": {
 		"unicorn/no-useless-spread": "off",
 		"unicorn/no-array-for-each": "off",
+		"unicorn/no-array-reduce": "off",
+		"unicorn/prefer-array-some": "off",
+		"brace-style": "off",
 		"quotes": [
 			"error",
 			"double"
@@ -37,5 +40,9 @@
 		"camelcase": "off",
 		"no-trailing-spaces": "off",
 		"no-negated-condition": "off"
-	}
+	},
+	"ignorePatterns": [
+		"dist/**/*",
+		"bin/**/*"
+	]
 }

@@ -1,4 +1,4 @@
-import { PluginReference } from "@interfaces/plugin-reference";
+import { PluginReference } from "./plugin-reference";
 
 export interface ConfigurationJSON {
 	plugins: PluginReference[];

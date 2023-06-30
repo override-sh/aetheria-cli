@@ -121,7 +121,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 					this.logDebug("Found plugins injection point");
 					have_found_injection_point = true;
 				}
-				// If an array literal expression is found and we've found the injection point, we need to confirm
+					// If an array literal expression is found and we've found the injection point, we need to confirm
 				// it by finding an import, if we do, we can confirm the injection point
 				else if (typescript.isArrayLiteralExpression(node)) {
 					if (have_found_injection_point && node.getText().includes("import(")) {
@@ -154,10 +154,12 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 
 				await writeFile(plugins_source_file_path, new_plugins_source_file_content);
 				this.log("React components imported");
-			} else {
+			}
+			else {
 				this.warn("Cannot find injection point for react components. No react component have been imported.");
 			}
-		} catch (error: any) {
+		}
+		catch (error: any) {
 			this.logDebug(error.message);
 			this.warn("Cannot find default react components export file. No react components will be imported.");
 		}
@@ -183,27 +185,30 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 			(value) => value.isFile() && NextConventionalFilenames.some((filename) => filename.test(value.name)),
 		);
 
-		for (const route of routesToImport) {
-			// The folder is the path without the resolution path
-			const folder = route.path.replaceAll(`${resolution_path}/`, "");
+		await Promise.all(
+			routesToImport.map(async (route) => {
+				// The folder is the path without the resolution path
+				const folder = route.path.replaceAll(`${resolution_path}/`, "");
 
-			try {
-				const file_destination = resolve(this.flags.app_path, folder, route.name);
+				try {
+					const file_destination = resolve(this.flags.app_path, folder, route.name);
 
-				// Creates the folder if it doesn't exist
-				await mkdir(resolve(this.flags.app_path, folder), {
-					recursive: true,
-				});
+					// Creates the folder if it doesn't exist
+					await mkdir(resolve(this.flags.app_path, folder), {
+						recursive: true,
+					});
 
-				// Create the symlink to the route
-				await symlink(resolve(route.path, route.name), file_destination);
+					// Create the symlink to the route
+					await symlink(resolve(route.path, route.name), file_destination);
 
-				this.log(`Route '${folder}/${route.name}' imported!`);
-			} catch (error: any) {
-				this.warn(`Route '${folder}/${route.name}' already exists! Skipped.`);
-				this.logDebug(error.message);
-			}
-		}
+					this.log(`Route '${folder}/${route.name}' imported!`);
+				}
+				catch (error: any) {
+					this.warn(`Route '${folder}/${route.name}' already exists! Skipped.`);
+					this.logDebug(error.message);
+				}
+			}),
+		);
 	}
 
 	/**
