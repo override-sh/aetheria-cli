@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { inc } from "semver";
 import simpleGit, { DefaultLogFields, ListLogLine, LogResult } from "simple-git";
 import { BaseCommand } from "../../base";
+import { parallelize } from "../../helpers";
 import { AetheriaPjson, BumpVersion } from "../../interfaces";
 
 export class Publish extends BaseCommand<typeof Publish> {
@@ -14,31 +15,36 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 	static flags = {
 		...BaseCommand.flags,
-		target:   Flags.string({
+		target:       Flags.string({
 			char:        "t",
 			description: "The target package.json to build and publish",
 			required:    true,
 		}),
-		build:    Flags.boolean({
+		build:        Flags.boolean({
 			description: "Whether to build the package before publishing",
 			default:     true,
 			allowNo:     true,
 		}),
-		tag:      Flags.string({
+		tag:          Flags.string({
 			char:        "T",
 			description: "The tag to use for the package",
 			default:     "latest",
 			required:    true,
 		}),
-		tsconfig: Flags.string({
+		tsconfig:     Flags.string({
 			description: "The tsconfig.json loaded by tsc in the build step, if not provided, the default tsconfig.json will be used",
 		}),
-		continue: Flags.boolean({
+		continue:     Flags.boolean({
 			char:        "c",
 			description: "Whether to continue the publish process even if the package have no changes since the last publish",
 		}),
-		publish:  Flags.boolean({
+		publish:      Flags.boolean({
 			description: "Whether to publish the package after building",
+			default:     true,
+			allowNo:     true,
+		}),
+		version_bump: Flags.boolean({
+			description: "Whether to bump the version of the package before publishing",
 			default:     true,
 			allowNo:     true,
 		}),
@@ -47,12 +53,9 @@ export class Publish extends BaseCommand<typeof Publish> {
 	protected origin_folder!: string;
 
 	public async run(): Promise<any> {
-		// eslint-disable-next-line unicorn/prefer-module
-		const inquirer = require("inquirer");
-
 		this.origin_folder = dirname(this.flags.target);
 		const pjson = JSON.parse(await readFile(this.flags.target, "utf-8")) as Record<string, any>;
-		let config: AetheriaPjson = pjson.aetheria as AetheriaPjson || {
+		const config: AetheriaPjson = pjson.aetheria as AetheriaPjson || {
 			assets: [],
 		} as AetheriaPjson;
 
@@ -75,7 +78,28 @@ export class Publish extends BaseCommand<typeof Publish> {
 		const commit_history = await this.getCommitHistory(config.reference_commit);
 		this.log(`Found ${commit_history.total} commits since reference commit`);
 
+		await this.ensureEnoughCommitsOrContinue(commit_history);
+		this.bumpVersion(pjson, this.analyzeCommitHistory(commit_history));
+
+		if (build) {
+			await build;
+		}
+
+		// Run non dependent tasks in parallel
+		const [ , dist_folder ] = await parallelize(
+			this.updatePackageJSON(pjson, config),
+			this.resolveDistFolder(),
+		);
+
+		await this.copyAssets(config, dist_folder);
+		await this.publish(pjson, dist_folder);
+	}
+
+	private async ensureEnoughCommitsOrContinue(commit_history: LogResult): Promise<void> {
 		if (commit_history.total === 0 && !this.flags.continue) {
+			// eslint-disable-next-line unicorn/prefer-module
+			const inquirer = require("inquirer");
+
 			const response: { continue: boolean } = await inquirer.prompt({
 				type:    "confirm",
 				name:    "continue",
@@ -87,27 +111,6 @@ export class Publish extends BaseCommand<typeof Publish> {
 				this.warn("Publishing cancelled");
 				this.exit(1);
 			}
-		}
-
-		const commit_analysis = this.analyzeCommitHistory(commit_history);
-		this.bumpVersion(pjson, commit_analysis);
-
-		if (build) {
-			await build;
-		}
-
-		await this.updatePackageJSON(pjson, config);
-
-		const dist_folder = await this.resolveDistFolder();
-		await this.copyAssets(config, dist_folder);
-
-		if (this.flags.publish) {
-			this.log(`Publishing ${pjson.name}@${pjson.version} and ${pjson.name}@${this.flags.tag} ...`);
-			await this.publish(dist_folder);
-			this.log("Package published successfully");
-		}
-		else {
-			this.log("Package built successfully");
 		}
 	}
 
@@ -129,12 +132,20 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 	/**
 	 * Publish the package to npm
+	 * @param pjson The package.json data
 	 * @param {string} dist_folder The dist folder
 	 * @returns {Promise<void>} A promise that resolves when the package is published
 	 * @private
 	 */
-	private publish(dist_folder: string) {
+	private publish(pjson: Record<string, any>, dist_folder: string) {
+		if (!this.flags.publish) {
+			this.warn("Skipping publishing");
+			return Promise.resolve();
+		}
+
 		return new Promise<void>((resolve, reject) => {
+			this.log(`Publishing ${pjson.name}@${pjson.version} and ${pjson.name}@${this.flags.tag} ...`);
+
 			const publish = spawn(
 				"npm",
 				[
@@ -161,6 +172,7 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 			publish.on("close", (code) => {
 				if (code === 0) {
+					this.log("Package published successfully");
 					resolve();
 				}
 				else {
@@ -223,6 +235,16 @@ export class Publish extends BaseCommand<typeof Publish> {
 	 * @private
 	 */
 	private bumpVersion(pjson: Record<string, any>, commit_analysis: BumpVersion) {
+		if (!this.flags.version_bump) {
+			this.warn(`No version bump, current version is v${pjson.version}`);
+			return;
+		}
+
+		if (!this.flags.publish) {
+			this.warn("Skipping version bump");
+			return;
+		}
+
 		if (commit_analysis.major) {
 			this.log("Bumping major version");
 			pjson.version = inc(pjson.version, "major");
