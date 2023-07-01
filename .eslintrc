@@ -9,10 +9,7 @@
 		"unicorn/no-array-reduce": "off",
 		"unicorn/prefer-array-some": "off",
 		"brace-style": "off",
-		"quotes": [
-			"error",
-			"double"
-		],
+		"quotes": "off",
 		"indent": [
 			"error",
 			"tab"
