@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import * as typescript from "typescript";
 import { BaseCommand } from "../../../base";
 import { NextConventionalFilenames } from "../../../constants/frontend";
-import { loadPlugin, resolvePlugin } from "../../../helpers";
+import { loadPlugin, parallelize, resolvePlugin } from "../../../helpers";
 import { ConfigurationJSON, PluginData } from "../../../interfaces";
 
 export class PluginInstall extends BaseCommand<typeof PluginInstall> {
@@ -62,7 +62,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	/**
 	 * Install a local plugin
 	 * @param {ConfigurationJSON} configuration The configuration file
-	 * @returns {Promise<void>}
+	 * @returns {Promise<void>} The promise
 	 */
 	async runLocalInstallation(configuration: ConfigurationJSON) {
 		const plugin = loadPlugin(
@@ -83,7 +83,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 
 	/**
 	 * Import the React components from the plugin
-	 * @returns {Promise<void>}
+	 * @returns {Promise<void>} The promise
 	 */
 	async importReactComponents() {
 		this.log("Importing react components");
@@ -167,7 +167,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 
 	/**
 	 * Import the Next.js routes from the plugin creating the necessary symlinks
-	 * @returns {Promise<void>}
+	 * @returns {Promise<void>} The promise
 	 */
 	async importNextRoutes() {
 		this.log("Importing next routes");
@@ -185,8 +185,8 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 			(value) => value.isFile() && NextConventionalFilenames.some((filename) => filename.test(value.name)),
 		);
 
-		await Promise.all(
-			routesToImport.map(async (route) => {
+		await parallelize(
+			...routesToImport.map(async (route) => {
 				// The folder is the path without the resolution path
 				const folder = route.path.replaceAll(`${resolution_path}/`, "");
 
@@ -215,7 +215,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	 * Install a plugin
 	 * @param {PluginData} plugin The plugin to install
 	 * @param {ConfigurationJSON} configuration The configuration file
-	 * @returns {Promise<void>}
+	 * @returns {Promise<void>} The promise
 	 */
 	async install(plugin: PluginData, configuration: ConfigurationJSON) {
 		this.log(`Installing plugin ${plugin.name} (v${plugin.version})`);
