@@ -99,7 +99,7 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
 			...others,
 		);
 
-		throw input instanceof Error ? input : new Error(input);
+		throw (input instanceof Error ? input : new Error(input));
 	}
 
 	protected async catch(err: Error & { exitCode?: number }): Promise<any> {
