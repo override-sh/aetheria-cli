@@ -1,0 +1,12 @@
+{
+	"plugins": [
+		{
+			"id": "@aetheria/plugin-auth",
+			"resolve": "./node_modules/@aetheria/plugin-auth"
+		},
+		{
+			"id": "@aetheria/plugin-tailwind-classes-builder",
+			"resolve": "./node_modules/@aetheria/plugin-tailwind-classes-builder"
+		}
+	]
+}
