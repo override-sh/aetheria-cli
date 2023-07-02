@@ -11,7 +11,12 @@ import { AetheriaPjson, BumpVersion } from "../../interfaces";
 export class Publish extends BaseCommand<typeof Publish> {
 	static summary = "Build and publish a package";
 
-	static examples = [ "<%= config.bin %> <%= command.id %>" ];
+	static examples = [
+		{
+			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/config/package.json --tsconfig ../headless/libs/config/tsconfig.json",
+			description: "Build and publish the @aetheria/config package (in monorepo mode)",
+		},
+	];
 
 	static flags = {
 		...BaseCommand.flags,
@@ -272,6 +277,10 @@ export class Publish extends BaseCommand<typeof Publish> {
 			this.log(`Building ${this.origin_folder} ...`);
 
 			const child = spawn("tsc", { cwd: this.origin_folder });
+
+			child.stdout.on("data", (data) => {
+				this.warn(data.toString());
+			});
 
 			child.stderr.on("data", (data) => {
 				this.warn(data.toString());
