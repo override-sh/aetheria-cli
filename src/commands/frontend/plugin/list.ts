@@ -1,8 +1,8 @@
-import { Flags, ux } from "@oclif/core";
-import { readFile } from "node:fs/promises";
+import { getConfiguration, resolvePlugins } from "@aetheria/config";
+import { Flags } from "@oclif/core";
+import * as Table from "cli-table3";
 import { BaseCommand } from "../../../base";
-import { resolvePlugin } from "../../../helpers";
-import { ConfigurationJSON } from "../../../interfaces";
+
 
 export class PluginList extends BaseCommand<typeof PluginList> {
 	static summary = "List the installed plugins";
@@ -21,40 +21,34 @@ export class PluginList extends BaseCommand<typeof PluginList> {
 	public async run(): Promise<void> {
 		const plugins = await this.loadPlugins();
 
-		ux.table(
-			plugins,
-			{
-				name:    {
-					header: "Plugin",
-				},
-				version: {
-					header: "Version",
-					get:    (row) => `v${row.version}`,
-				},
+		const table = new Table({
+			head:  [
+				"Plugin",
+				"Version",
+			],
+			style: {
+				head: [
+					"bold",
+					"green",
+				],
 			},
-			{
-				sort: "name",
+		});
+		table.push(...plugins);
 
-			},
-		);
+		console.log(table.toString());
 	}
 
 	/**
 	 * Load the plugins from the configuration file
-	 * @returns {Promise<Awaited<{name: any, version: any}>[]>} The plugins
+	 * @returns {Promise<[string, string][]>} The plugins
 	 */
 	async loadPlugins() {
-		const configuration_json = JSON.parse(await readFile(this.flags.configuration, "utf-8")) as ConfigurationJSON;
+		const configuration = await getConfiguration(this.flags.configuration);
+		const plugins = await resolvePlugins(configuration, this.flags.configuration);
 
-		const plugins = configuration_json.plugins.map(async (plugin) => {
-			const package_json = JSON.parse(await resolvePlugin(this.flags.configuration, plugin));
-
-			return {
-				name:    package_json.name,
-				version: package_json.version,
-			};
-		});
-
-		return Promise.all(plugins);
+		return plugins.map((plugin): [ string, string ] => [
+			plugin.name,
+			plugin.version,
+		]);
 	}
 }
