@@ -11,14 +11,44 @@ import { AetheriaPjson, BumpVersion, GreatestRelease, PublishIsolatedModeConfigO
 export class Publish extends BaseCommand<typeof Publish> {
 	static summary = "Build and publish a package";
 
+	static description = `
+		Build and publish a package.
+		When using the --isolated flag, acts on as package scoped.
+		When using the --nx-target flag, acts in frontend mode.
+		
+		Backend mode:
+		- The --nx-target flag should not be used
+		- The --tsconfig flag is required
+		- The --isolated flag is optional
+		- The --tsconfig flag must be a valid tsconfig.json file
+		
+		Frontend mode:
+		- The --nx-target flag is required
+		- The --tsconfig flag is required
+		- The --isolated flag is optional
+		- The --nx-target flag must be a valid nx target (e.g. plugin-example-frontend) or -
+		- The --tsconfig flag must be a valid tsconfig.json file
+		
+		if the --nx-target flag is -, the target name will be inferred from the project.json file of a nx project
+		
+	`;
+
 	static examples = [
 		{
-			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/config/package.json --tsconfig ../headless/libs/config/tsconfig.lib.json --isolated",
+			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/config/package.json --tsconfig tsconfig.lib.json --isolated",
 			description: "Build and publish the @aetheria/config package (in isolated mode)",
 		},
 		{
 			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/ --tsconfig tsconfig.lib.json",
 			description: "Build and publish the @aetheria/* packages (in monorepo mode)",
+		},
+		{
+			command:     "<%= config.bin %> <%= command.id %> -t ../frontend/libs/ --tsconfig tsconfig.lib.json --isolated --nx-target plugin-example-frontend",
+			description: "Build and publish the @aetheria/plugin-example-frontend package (in frontend-isolated mode)",
+		},
+		{
+			command:     "<%= config.bin %> <%= command.id %> -t ../frontend/libs/ --tsconfig tsconfig.lib.json --nx-target -",
+			description: "Build and publish the @aetheria/* packages (in frontend-monorepo mode)",
 		},
 	];
 
@@ -59,6 +89,9 @@ export class Publish extends BaseCommand<typeof Publish> {
 		}),
 		isolated:     Flags.boolean({
 			description: "Whether to publish the package in isolated mode (no monorepo, publish only the package)",
+		}),
+		"nx-target":  Flags.string({
+			description: "The target to use for the nx command (only used in frontend)",
 		}),
 	};
 
@@ -218,7 +251,7 @@ export class Publish extends BaseCommand<typeof Publish> {
 		// run the build process if needed
 		let build: Promise<void> | undefined;
 		if (override?.build ?? this.flags.build) {
-			build = this.build();
+			build = this.build(dirname(target));
 		}
 
 		// get the latest commit and define the reference commit if not already defined
@@ -255,8 +288,12 @@ export class Publish extends BaseCommand<typeof Publish> {
 			this.resolveDistFolder(dirname(target)),
 		);
 
+		// copy the assets only if not running in nx mode, nx will handle the assets itself
+		if (!this.flags["nx-target"]) {
+			await this.copyAssets(config, dist_folder, dirname(target));
+		}
+
 		// complete the publish process
-		await this.copyAssets(config, dist_folder, dirname(target));
 		await this.publish(pjson, dist_folder);
 	}
 
@@ -435,23 +472,51 @@ export class Publish extends BaseCommand<typeof Publish> {
 		this.log(`New version is ${pjson.version}`);
 	}
 
+	private async inferNxTarget(origin_folder: string) {
+		this.log("Inferring nx target ...");
+
+		console.log(this.origin_folder);
+		console.log(origin_folder);
+		process.exit(1);
+	}
+
 	/**
 	 * Build the project using tsc
+	 * @param origin_folder The origin folder
 	 * @returns {Promise<void>} A promise that resolves when the project is built
 	 * @private
 	 */
-	private build() {
+	private build(origin_folder?: string) {
 		return new Promise<void>((ok, fail) => {
-			this.log(`Building ${this.origin_folder} ...`);
+			this.log(`Building ${origin_folder ?? this.origin_folder} ...`);
 
-			const child = spawn("tsc", { cwd: this.origin_folder });
+			const cmd: [ string, string[] ] = this.flags["nx-target"]
+				? [
+					"npx",
+					[
+						"nx",
+						"run",
+						`${this.flags["nx-target"] !== "-"
+							? this.flags["nx-target"]
+							: this.inferNxTarget(origin_folder as string)}:build:production`,
+					],
+				]
+				: [
+					"tsc",
+					[],
+				];
+			const child = spawn(cmd[0], cmd[1], { cwd: this.origin_folder });
 
 			child.stdout.on("data", (data) => {
-				this.warn(data.toString());
+				if (this.flags.debug) {
+					this.warn(data.toString());
+				}
 			});
 
 			child.stderr.on("data", (data) => {
-				this.warn(data.toString());
+				if (this.flags.debug) {
+					this.warn(data.toString());
+				}
 			});
 
 			child.on("error", (err) => {

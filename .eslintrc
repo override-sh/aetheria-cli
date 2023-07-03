@@ -8,10 +8,12 @@
 		"unicorn/no-array-for-each": "off",
 		"unicorn/no-array-reduce": "off",
 		"unicorn/prefer-array-some": "off",
+		"unicorn/no-process-exit": "off",
 		"brace-style": "off",
 		"quotes": "off",
 		"indent": "off",
 		"no-tabs": "off",
+		"no-process-exit": "off",
 		"semi": [
 			"error",
 			"always"
