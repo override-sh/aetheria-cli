@@ -1,11 +1,13 @@
+import { tryResolutionPaths } from "@aetheria/config";
 import { Flags } from "@oclif/core";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import * as typescript from "typescript";
-import { BaseCommand } from "../../../base";
-import { NextConventionalFilenames } from "../../../constants/frontend";
-import { loadPlugin, parallelize, resolvePlugin } from "../../../helpers";
-import { ConfigurationJSON, PluginData } from "../../../interfaces";
+import { BaseCommand } from "../../base";
+import { NextConventionalFilenames } from "../../constants/frontend";
+import { loadPlugin, parallelize } from "../../helpers";
+import { ConfigurationJSON, PluginData } from "../../interfaces";
 
 export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	static summary = "Install a plugin";
@@ -17,26 +19,31 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 		configuration:   Flags.file({
 			char:        "c",
 			description: "The path to the plugins configuration file",
-			required:    true,
 		}),
 		resolution_path: Flags.string({
 			char:        "r",
 			description: "The path to the plugins resolution directory",
-			required:    true,
 		}),
 		name:            Flags.string({
 			char:        "n",
 			description: "The name of the plugin to install",
-			required:    true,
 		}),
 		app_path:        Flags.string({
 			char:        "a",
-			description: "The path to the app source directory",
-			required:    true,
+			description: "The path to the project source directory",
+		}),
+		project:         Flags.string({
+			char:        "p",
+			description: "The path to the project root directory",
+			options:     [
+				"frontend",
+				"backend",
+			],
 		}),
 	};
 
 	public async run(): Promise<void> {
+		await this.requireMissingParameters();
 		const configuration = await this.loadConfiguration();
 
 		await this.runLocalInstallation(configuration);
@@ -47,7 +54,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	 * @returns {Promise<ConfigurationJSON>} The configuration file
 	 */
 	async loadConfiguration() {
-		return JSON.parse(await readFile(this.flags.configuration, "utf-8")) as ConfigurationJSON;
+		return JSON.parse(await readFile(this.flags.configuration as string, "utf-8")) as ConfigurationJSON;
 	}
 
 	/**
@@ -56,7 +63,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	 * @returns {Promise<void>} The configuration file
 	 */
 	async saveConfiguration(configuration: ConfigurationJSON) {
-		await writeFile(this.flags.configuration, JSON.stringify(configuration, null, 4));
+		await writeFile(this.flags.configuration as string, JSON.stringify(configuration, null, 4));
 	}
 
 	/**
@@ -66,9 +73,13 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	 */
 	async runLocalInstallation(configuration: ConfigurationJSON) {
 		const plugin = loadPlugin(
-			await resolvePlugin(this.flags.configuration, {
-				id:      this.flags.name,
-				resolve: this.flags.resolution_path,
+			await tryResolutionPaths({
+				id:      this.flags.name as string,
+				resolve: this.flags.resolution_path as string,
+			}, {
+				filename:        "package.json",
+				resolution_path: this.flags.app_path as string,
+				enable_parent:   true,
 			}),
 		);
 
@@ -77,8 +88,11 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 		}
 
 		await this.install(plugin, configuration);
-		await this.importNextRoutes();
-		await this.importReactComponents();
+
+		if (this.flags.project === "frontend") {
+			await this.importNextRoutes();
+			await this.importReactComponents();
+		}
 	}
 
 	/**
@@ -88,7 +102,11 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	async importReactComponents() {
 		this.log("Importing react components");
 
-		const resolution_path = resolve(this.flags.configuration, this.flags.resolution_path, "src/index.ts");
+		const resolution_path = resolve(
+			this.flags.configuration as string,
+			this.flags.resolution_path as string,
+			"src/index.ts",
+		);
 		try {
 			const index_content = await readFile(resolution_path, "utf-8");
 
@@ -97,7 +115,7 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 				return;
 			}
 
-			const plugins_source_file_path = resolve(this.flags.app_path, "plugins.ts");
+			const plugins_source_file_path = resolve(this.flags.app_path as string, "plugins.ts");
 			const plugins_source_file_content = await readFile(plugins_source_file_path, "utf-8");
 
 			const plugins_source_file = typescript.createSourceFile(
@@ -172,7 +190,11 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 	async importNextRoutes() {
 		this.log("Importing next routes");
 
-		const resolution_path = resolve(this.flags.configuration, this.flags.resolution_path, "src/routes");
+		const resolution_path = resolve(
+			this.flags.configuration as string,
+			this.flags.resolution_path as string,
+			"src/routes",
+		);
 		const routes = await readdir(resolution_path, {
 			encoding:      "utf-8",
 			recursive:     true,
@@ -191,10 +213,10 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 				const folder = route.path.replaceAll(`${resolution_path}/`, "");
 
 				try {
-					const file_destination = resolve(this.flags.app_path, folder, route.name);
+					const file_destination = resolve(this.flags.app_path as string, folder, route.name);
 
 					// Creates the folder if it doesn't exist
-					await mkdir(resolve(this.flags.app_path, folder), {
+					await mkdir(resolve(this.flags.app_path as string, folder), {
 						recursive: true,
 					});
 
@@ -221,11 +243,86 @@ export class PluginInstall extends BaseCommand<typeof PluginInstall> {
 		this.log(`Installing plugin ${plugin.name} (v${plugin.version})`);
 
 		configuration.plugins.push({
-			id:      this.flags.name,
-			resolve: this.flags.resolution_path,
+			id:      this.flags.name as string,
+			resolve: this.flags.resolution_path as string,
 		});
 		await this.saveConfiguration(configuration);
 
 		this.log(`Plugin ${plugin.name} (v${plugin.version}) installed`);
+	}
+
+	/**
+	 * Require the missing command line parameters
+	 * @returns {Promise<void>} The promise
+	 * @private
+	 */
+	private async requireMissingParameters() {
+		const inquirer = require("inquirer");
+
+		if (!this.flags.project) {
+			this.flags.project = (await inquirer.prompt([
+				{
+					type:    "list",
+					name:    "project",
+					message: "Which project do you want to install the plugin for?",
+					choices: [
+						"frontend",
+						"backend",
+					],
+				},
+			])).project;
+		}
+
+		if (!this.flags.configuration) {
+			this.flags.configuration = (await inquirer.prompt([
+				{
+					type:     "input",
+					name:     "configuration",
+					message:  "Where is the plugin config file located?",
+					validate: (value: string) => {
+						return existsSync(value) ? true : "The file doesn't exist";
+					},
+				},
+			])).configuration;
+		}
+
+		if (!this.flags.resolution_path) {
+			this.flags.resolution_path = (await inquirer.prompt([
+				{
+					type:     "input",
+					name:     "resolution_path",
+					message:  "Where is the plugin located?",
+					validate: (value: string) => {
+						return existsSync(value) ? true : "The folder doesn't exist";
+					},
+				},
+			])).resolution_path;
+		}
+
+		if (!this.flags.name) {
+			this.flags.name = (await inquirer.prompt([
+				{
+					type:     "input",
+					name:     "name",
+					message:  "Which is the plugin's name?",
+					validate: (value: string) => {
+						return value.length > 0 ? true : "The name cannot be empty";
+					},
+				},
+			])).name;
+		}
+
+		if (!this.flags.app_path) {
+			this.flags.app_path = (await inquirer.prompt([
+				{
+					type:     "input",
+					name:     "app_path",
+					message:  "Where is the project located?",
+					validate: (value: string) => {
+						return existsSync(value) ? true : "The folder doesn't exist";
+					},
+				},
+			])).app_path;
+		}
 	}
 }
