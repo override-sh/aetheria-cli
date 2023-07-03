@@ -1,0 +1,50 @@
+{
+	"type": "object",
+	"properties": {
+		"items": {
+			"type": "array",
+			"uniqueItems": true,
+			"items": {
+				"type": "object",
+				"additionalProperties": true,
+				"properties": {
+					"type": {
+						"enum": [
+							"user",
+							"template"
+						]
+					}
+				},
+				"allOf": [
+					{
+						"if": {
+							"properties": {
+								"type": {
+									"const": "user"
+								}
+							}
+						},
+						"then": {
+							"$ref": "./definitions/users.schema.json"
+						}
+					},
+					{
+						"if": {
+							"properties": {
+								"type": {
+									"const": "template"
+								}
+							}
+						},
+						"then": {
+							"$ref": "./definitions/templates.schema.json"
+						}
+					}
+				]
+			}
+		}
+	},
+	"required": [
+		"items"
+	]
+}
