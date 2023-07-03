@@ -21,7 +21,7 @@
 		"@aetheria/common": "^1.0.3",
 		"@aetheria/config": "^1.0.1",
 		"@aetheria/plugin-auth": "^1.0.0",
-		"@aetheria/plugin-tailwind-classes-builder": "^1.0.0",
+		"@aetheria/plugin-tailwind-classes-builder": "^1.2.0",
 		"@nestjs/common": "^9.4.3",
 		"@oclif/core": "^2",
 		"@oclif/plugin-help": "^5",
