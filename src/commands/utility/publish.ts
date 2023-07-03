@@ -1,20 +1,24 @@
 import { Flags } from "@oclif/core";
 import { spawn } from "node:child_process";
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { cp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { inc } from "semver";
+import { gt, inc } from "semver";
 import simpleGit, { DefaultLogFields, ListLogLine, LogResult } from "simple-git";
 import { BaseCommand } from "../../base";
 import { parallelize } from "../../helpers";
-import { AetheriaPjson, BumpVersion } from "../../interfaces";
+import { AetheriaPjson, BumpVersion, GreatestRelease, PublishIsolatedModeConfigOverride } from "../../interfaces";
 
 export class Publish extends BaseCommand<typeof Publish> {
 	static summary = "Build and publish a package";
 
 	static examples = [
 		{
-			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/config/package.json --tsconfig ../headless/libs/config/tsconfig.json",
-			description: "Build and publish the @aetheria/config package (in monorepo mode)",
+			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/config/package.json --tsconfig ../headless/libs/config/tsconfig.lib.json --isolated",
+			description: "Build and publish the @aetheria/config package (in isolated mode)",
+		},
+		{
+			command:     "<%= config.bin %> <%= command.id %> -t ../headless/libs/ --tsconfig tsconfig.lib.json",
+			description: "Build and publish the @aetheria/* packages (in monorepo mode)",
 		},
 	];
 
@@ -22,81 +26,237 @@ export class Publish extends BaseCommand<typeof Publish> {
 		...BaseCommand.flags,
 		target:       Flags.string({
 			char:        "t",
-			description: "The target package.json to build and publish",
+			description: "The target directory containing libraries or a package.json to build and publish",
 			required:    true,
 		}),
 		build:        Flags.boolean({
-			description: "Whether to build the package before publishing",
+			description: "Whether to build the package(s) before publishing",
 			default:     true,
 			allowNo:     true,
 		}),
 		tag:          Flags.string({
 			char:        "T",
-			description: "The tag to use for the package",
+			description: "The tag to use for the package(s)",
 			default:     "latest",
 			required:    true,
 		}),
 		tsconfig:     Flags.string({
-			description: "The tsconfig.json loaded by tsc in the build step, if not provided, the default tsconfig.json will be used",
+			description: "The name of the tsconfig.json loaded by tsc in the build step(s), if not provided, the default tsconfig.json will be used",
 		}),
 		continue:     Flags.boolean({
 			char:        "c",
-			description: "Whether to continue the publish process even if the package have no changes since the last publish",
+			description: "Whether to continue the publish process even if the package(s) have no changes since the last publish",
 		}),
 		publish:      Flags.boolean({
-			description: "Whether to publish the package after building",
+			description: "Whether to publish the package(s) after building",
 			default:     true,
 			allowNo:     true,
 		}),
 		version_bump: Flags.boolean({
-			description: "Whether to bump the version of the package before publishing",
+			description: "Whether to bump the version of the package(s) before publishing",
 			default:     true,
 			allowNo:     true,
+		}),
+		isolated:     Flags.boolean({
+			description: "Whether to publish the package in isolated mode (no monorepo, publish only the package)",
 		}),
 	};
 
 	protected origin_folder!: string;
 
 	public async run(): Promise<any> {
-		this.origin_folder = dirname(this.flags.target);
-		const pjson = JSON.parse(await readFile(this.flags.target, "utf-8")) as Record<string, any>;
+		// if the target is a package.json, we need to get the folder containing it
+		this.origin_folder = /\.[^/]+$/g.test(this.flags.target) ? dirname(this.flags.target) : this.flags.target;
+
+		await (this.flags.isolated ? this.runIsolated() : this.runMonorepo());
+	}
+
+	/**
+	 * Run the publish command in monorepo mode (publish all libraries in the given folder)
+	 * @returns {Promise<void>} A promise that resolves when the publish process is complete
+	 * @private
+	 */
+	private async runMonorepo(): Promise<void> {
+		this.log(`Running in monorepo mode, all libraries in '${this.origin_folder}' will be updated and published`);
+
+		// get all entities in the target folder (the origin folder) and ensure they are all folders (aka libraries)
+		const libs = await readdir(
+			this.origin_folder,
+			{
+				withFileTypes: true,
+				encoding:      "utf-8",
+			},
+		);
+		const lib_folders = libs.filter((lib) => lib.isDirectory()).map((lib) => lib.name);
+
+		this.log(`Found ${lib_folders.length} libraries in '${this.origin_folder}'`);
+		lib_folders.forEach((lib) => {
+			this.logDebug(`Found library folder '${lib}'`);
+		});
+
+		if (!this.flags.build) {
+			this.warn(`Running in monorepo mode without building the libraries first is not allowed, libraries will be built before publishing`);
+		}
+
+		// run common operations for all libraries in parallel
+		const [ , latest_commit, greatest_release ] = await parallelize(
+			this.build(),
+			this.getLatestCommitOrFail(),
+			this.findGreatestRelease(lib_folders),
+		);
+
+		const commit_history = await this.getCommitHistory(greatest_release.reference_commit.commit);
+
+		// ensure there are enough commits to publish
+		await this.ensureEnoughCommitsOrContinue(commit_history);
+
+		await this.log(`Delegating the publish process to (prepared) isolated mode`);
+		// run the publish process for each library in parallel
+		await parallelize(
+			...lib_folders.map(async (lib) => {
+				return this.runIsolated({
+					target:                 resolve(this.origin_folder, lib, "package.json"),
+					soft_error:             true,
+					build:                  false,
+					omit_continue_question: true,
+					latest_commit,
+					greatest_release,
+					commit_history,
+				});
+			}),
+		);
+	}
+
+	/**
+	 * Find the greatest release between all the libraries in the given folder
+	 * @param {string[]} lib_folders The list of libraries to check
+	 * @returns {Promise<GreatestRelease>} A promise that resolves with the greatest release found
+	 * @private
+	 */
+	private async findGreatestRelease(lib_folders: string[]): Promise<GreatestRelease> {
+		this.logDebug(`Finding the greatest release between all libraries in '${this.origin_folder}'`);
+
+		// get the package.json of each library
+		const pjsons = await parallelize(
+			...lib_folders.map(async (lib) => {
+				const pjson = JSON.parse(await readFile(
+					resolve(this.origin_folder, lib, "package.json"),
+					"utf-8",
+				)) as Record<string, any>;
+
+				return pjson;
+			}),
+		);
+
+		// get the version and reference commit of each library
+		const versions: string[] = pjsons.map((pjson) => pjson?.version ?? "0.0.0");
+		versions.forEach((version, index) => {
+			this.logDebug(`Found library '${lib_folders[index]}' with version '${version}'`);
+		});
+
+		const reference_commit: string[] = pjsons.map((pjson) => pjson?.aetheria?.reference_commit ?? "HEAD");
+		reference_commit.forEach((commit, index) => {
+			this.logDebug(`Found library '${lib_folders[index]}' with reference commit '${commit}'`);
+		});
+
+		// get the commit history of each library and find the number of commits and reference commit
+		const commits = await parallelize(
+			...reference_commit.map(async (commit) => {
+				const git = simpleGit({
+					baseDir: this.origin_folder,
+				});
+
+				const log = await git.log({
+					from: commit,
+					to:   "HEAD",
+				});
+
+				return {
+					total: log.total,
+					commit,
+				};
+			}),
+		);
+
+		return {
+			// find the greatest version
+			greatest_version: versions.reduce(
+				(greatest, current) => gt(greatest, current) ? greatest : current,
+				"0.0.0",
+			),
+			// find the greatest number of commits (longest unpublished history) and its reference commit
+			reference_commit: commits.reduce(
+				(greatest, current) => current.total > greatest.total ? current : greatest,
+				{
+					total:  0,
+					commit: "HEAD",
+				},
+			),
+		};
+	}
+
+	/**
+	 * Run the publish command in isolated mode (publish only the package in the given folder)
+	 * @param {PublishIsolatedModeConfigOverride} override The override configuration for the isolated mode
+	 * @returns {Promise<void>} A promise that resolves when the publish process is complete
+	 * @private
+	 */
+	private async runIsolated(override?: PublishIsolatedModeConfigOverride): Promise<void> {
+		const target = override?.target ?? this.flags.target;
+
+		this.log(`Running in isolated mode, publishing '${target}'`);
+
+		// get the package.json of the target package and ensure it has the aetheria property (aka it's a valid package)
+		const pjson = JSON.parse(await readFile(target, "utf-8")) as Record<string, any>;
 		const config: AetheriaPjson = pjson.aetheria as AetheriaPjson || {
 			assets: [],
 		} as AetheriaPjson;
 
-		this.verifyPreconditions(pjson);
+		// verify the preconditions for the publish process
+		this.verifyPreconditions(pjson, override?.soft_error);
 
+		// run the build process if needed
 		let build: Promise<void> | undefined;
-		if (this.flags.build) {
+		if (override?.build ?? this.flags.build) {
 			build = this.build();
 		}
 
-		const latest_commit = await this.getLatestCommitOrFail();
-
-		if (!config.reference_commit) {
-			this.warn("No reference commit found in aetheria configuration, using latest commit");
-			config.reference_commit = latest_commit.hash;
-		}
+		// get the latest commit and define the reference commit if not already defined
+		const latest_commit = override?.latest_commit ?? await this.getLatestCommitOrFail();
+		config.reference_commit = override?.greatest_release?.reference_commit.commit ?? config.reference_commit ??
+		                          latest_commit.hash;
 
 		this.log(`Found reference commit ${config.reference_commit}`);
 
-		const commit_history = await this.getCommitHistory(config.reference_commit);
+		// get the commit history since the reference commit
+		const commit_history = override?.commit_history ??
+		                       await this.getCommitHistory(config.reference_commit as string);
 		this.log(`Found ${commit_history.total} commits since reference commit`);
 
-		await this.ensureEnoughCommitsOrContinue(commit_history);
+		// ensure there are enough commits to publish
+		if (!override?.omit_continue_question) {
+			await this.ensureEnoughCommitsOrContinue(commit_history);
+		}
+
+		pjson.version = override?.greatest_release?.greatest_version ?? pjson.version;
+		config.reference_commit = latest_commit.hash;
+
+		// bump the version and update the package.json
 		this.bumpVersion(pjson, this.analyzeCommitHistory(commit_history));
 
+		// await the build process if previously started
 		if (build) {
 			await build;
 		}
 
 		// Run non dependent tasks in parallel
 		const [ , dist_folder ] = await parallelize(
-			this.updatePackageJSON(pjson, config),
-			this.resolveDistFolder(),
+			this.updatePackageJSON(target, pjson, config),
+			this.resolveDistFolder(dirname(target)),
 		);
 
-		await this.copyAssets(config, dist_folder);
+		// complete the publish process
+		await this.copyAssets(config, dist_folder, dirname(target));
 		await this.publish(pjson, dist_folder);
 	}
 
@@ -121,18 +281,19 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 	/**
 	 * Update the package.json data with the new version and the new reference commit
+	 * @param target The target package.json path
 	 * @param {Record<string, any>} pjson The package.json data
 	 * @param {AetheriaPjson} config The aetheria configuration
 	 * @returns {Promise<void>} A promise that resolves when the package.json is updated
 	 * @private
 	 */
-	private async updatePackageJSON(pjson: Record<string, any>, config: AetheriaPjson) {
+	private async updatePackageJSON(target: string, pjson: Record<string, any>, config: AetheriaPjson) {
 		const new_pjson: Record<string, any> = {
 			...pjson,
 			aetheria: config,
 		};
 
-		await writeFile(this.flags.target, JSON.stringify(new_pjson, null, 4));
+		await writeFile(target, JSON.stringify(new_pjson, null, 4));
 	}
 
 	/**
@@ -191,10 +352,11 @@ export class Publish extends BaseCommand<typeof Publish> {
 	 * Copy the defined assets to the dist folder, always copy the package.json
 	 * @param {AetheriaPjson} config The aetheria configuration
 	 * @param {string} dist_folder The dist folder
+	 * @param origin_folder The origin folder
 	 * @returns {Promise<void>} A promise that resolves when the assets are copied
 	 * @private
 	 */
-	private async copyAssets(config: AetheriaPjson, dist_folder: string) {
+	private async copyAssets(config: AetheriaPjson, dist_folder: string, origin_folder: string) {
 		this.log("Copying assets to dist folder ...");
 
 		const assets = [
@@ -202,9 +364,9 @@ export class Publish extends BaseCommand<typeof Publish> {
 			"package.json",
 		];
 
-		await Promise.all(assets.map(async (asset) => {
+		await parallelize(...assets.map(async (asset) => {
 			const destination = resolve(dist_folder, asset);
-			const origin = resolve(this.origin_folder, asset);
+			const origin = resolve(origin_folder, asset);
 
 			this.logDebug(`Copying asset '${origin}' to '${destination}' ...`);
 			await cp(origin, destination, { recursive: true });
@@ -215,21 +377,20 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 	/**
 	 * Resolve the dist folder from the tsconfig.json
+	 * @param {string} base_folder The base folder
 	 * @returns {Promise<string>} A promise that resolves with the dist folder
 	 * @private
 	 */
-	private async resolveDistFolder() {
+	private async resolveDistFolder(base_folder: string) {
 		const tsconfig_path = resolve(
-			...(this.flags.tsconfig
-				? [ this.flags.tsconfig ]
-				: [
-					this.origin_folder,
-					"./tsconfig.json",
-				]),
+			base_folder,
+			this.flags.tsconfig
+				? this.flags.tsconfig
+				: "tsconfig.json",
 		);
 
 		const tsconfig = JSON.parse(await readFile(tsconfig_path, "utf-8")) as Record<string, any>;
-		return resolve(dirname(tsconfig_path), tsconfig?.compilerOptions?.outDir || "dist");
+		return resolve(base_folder, tsconfig?.compilerOptions?.outDir || "dist");
 	}
 
 	/**
@@ -240,14 +401,19 @@ export class Publish extends BaseCommand<typeof Publish> {
 	 * @private
 	 */
 	private bumpVersion(pjson: Record<string, any>, commit_analysis: BumpVersion) {
-		if (!this.flags.version_bump) {
-			this.warn(`No version bump, current version is v${pjson.version}`);
-			return;
-		}
+		if (this.flags.isolated) {
+			if (!this.flags.version_bump) {
+				this.warn(`No version bump, current version is v${pjson.version}`);
+				return;
+			}
 
-		if (!this.flags.publish) {
-			this.warn("Skipping version bump");
-			return;
+			if (!this.flags.publish) {
+				this.warn("Skipping version bump");
+				return;
+			}
+		}
+		else if (!this.flags.isolated && !this.flags.version_bump) {
+			this.warn(`Version bump cannot be disabled in monorepo mode, bumping versions`);
 		}
 
 		if (commit_analysis.major) {
@@ -265,6 +431,8 @@ export class Publish extends BaseCommand<typeof Publish> {
 		else {
 			this.log(`No changes found, current version is ${pjson.version}`);
 		}
+
+		this.log(`New version is ${pjson.version}`);
 	}
 
 	/**
@@ -336,16 +504,17 @@ export class Publish extends BaseCommand<typeof Publish> {
 	/**
 	 * Verify that the preconditions are met
 	 * @param {Record<string, any>} pjson The package.json data
+	 * @param soft_error Whether to throw a soft error or not
 	 * @returns {void} Nothing
 	 * @private
 	 */
-	private verifyPreconditions(pjson: Record<string, any>): void {
+	private verifyPreconditions(pjson: Record<string, any>, soft_error?: boolean): void {
 		if (!pjson.name) {
-			this.error("No name specified in package.json");
+			this[soft_error ? "safeError" : "error"]("No name specified in package.json");
 		}
 
 		if (!pjson.version) {
-			this.error("No version specified in package.json");
+			this[soft_error ? "safeError" : "error"]("No version specified in package.json");
 		}
 
 		if (!pjson.aetheria) {
