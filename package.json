@@ -17,7 +17,7 @@
 		"/oclif.manifest.json"
 	],
 	"dependencies": {
-		"@aetheria/backend-interfaces": "^1.0.2",
+		"@aetheria/backend-interfaces": "^1.2.0",
 		"@aetheria/common": "^1.0.3",
 		"@aetheria/config": "^1.0.1",
 		"@aetheria/plugin-auth": "^1.0.0",
