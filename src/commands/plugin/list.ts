@@ -1,8 +1,7 @@
 import { getConfiguration, resolvePlugins } from "@aetheria/config";
 import { Flags } from "@oclif/core";
 import * as Table from "cli-table3";
-import { BaseCommand } from "../../../base";
-
+import { BaseCommand } from "../../base";
 
 export class PluginList extends BaseCommand<typeof PluginList> {
 	static summary = "List the installed plugins";
