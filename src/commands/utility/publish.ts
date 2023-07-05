@@ -132,12 +132,12 @@ export class Publish extends BaseCommand<typeof Publish> {
 		}
 
 		// run common operations for all libraries in parallel
-		const [ , latest_commit, greatest_release ] = await parallelize(
-			this.build(lib_folders),
+		const [ latest_commit, greatest_release ] = await parallelize(
 			this.getLatestCommitOrFail(),
 			this.findGreatestRelease(lib_folders),
 		);
 
+		await this.build(lib_folders);
 		const commit_history = await this.getCommitHistory(greatest_release.reference_commit.commit);
 
 		// ensure there are enough commits to publish
@@ -427,7 +427,13 @@ export class Publish extends BaseCommand<typeof Publish> {
 		);
 
 		const tsconfig = JSON.parse(await readFile(tsconfig_path, "utf-8")) as Record<string, any>;
-		return resolve(base_folder, tsconfig?.compilerOptions?.outDir || "dist");
+		return resolve(
+			base_folder,
+			(!this.flags["nx-target"] ? tsconfig?.compilerOptions?.outDir : tsconfig?.compilerOptions?.outDir.replace(
+				"out-tsc",
+				"libs/" + JSON.parse(await readFile(resolve(base_folder, "project.json"), "utf-8")).name,
+			)) || "dist",
+		);
 	}
 
 	/**
@@ -500,6 +506,9 @@ export class Publish extends BaseCommand<typeof Publish> {
 				"nx",
 				"run",
 				`${nx_target}:build:production`,
+				"--verbose",
+				"--output-style",
+				"stream",
 			];
 		});
 	}
@@ -516,7 +525,10 @@ export class Publish extends BaseCommand<typeof Publish> {
 				[
 					"nx",
 					"run",
-					`${this.flags["nx-target"]}:build:production`,
+					`${this.flags["nx-target"]}:build`,
+					"--verbose",
+					"--output-style",
+					"stream",
 				],
 			];
 		}
@@ -526,44 +538,43 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 	/**
 	 * Build a single project
-	 * @param {(value: (void | PromiseLike<void>)) => void} ok The resolve function
-	 * @param {(reason?: any) => void} fail The reject function
 	 * @param {[string, string[]]} command The command to execute
 	 * @returns {void} Nothing
 	 * @private
 	 */
 	private plainBuild(
-		ok: (value: (void | PromiseLike<void>)) => void,
-		fail: (reason?: any) => void,
 		command: [ string, string[] ],
 	) {
-		const child = spawn(command[0], command[1], { cwd: this.origin_folder });
+		return new Promise<void>((ok, fail) => {
+			this.logDebug(`Running '${command[0]} ${command[1].join(" ")}' ...`);
+			const child = spawn(command[0], command[1], { cwd: this.origin_folder });
 
-		child.stdout.on("data", (data) => {
-			if (this.flags.debug) {
-				this.warn(data.toString());
-			}
-		});
+			child.stdout.on("data", (data) => {
+				if (this.flags.debug) {
+					console.log(data.toString());
+				}
+			});
 
-		child.stderr.on("data", (data) => {
-			if (this.flags.debug) {
-				this.warn(data.toString());
-			}
-		});
+			child.stderr.on("data", (data) => {
+				if (this.flags.debug) {
+					console.log(data.toString());
+				}
+			});
 
-		child.on("error", (err) => {
-			this.safeError(err);
-		});
+			child.on("error", (err) => {
+				this.safeError(err);
+			});
 
-		child.on("close", (code) => {
-			if (code === 0) {
-				this.log("Build successfully");
-				ok();
-			}
-			else {
-				this.safeError(`Build failed with code ${code}`);
-				fail();
-			}
+			child.on("close", (code) => {
+				if (code === 0) {
+					this.log("Build successfully");
+					ok();
+				}
+				else {
+					this.safeError(`Build failed with code ${code}`);
+					fail(new Error(`Build failed with code ${code}`));
+				}
+			});
 		});
 	}
 
@@ -573,37 +584,30 @@ export class Publish extends BaseCommand<typeof Publish> {
 	 * @private
 	 * @param lib_folders  The lib folders
 	 */
-	private build(lib_folders?: string[]) {
-		return new Promise<void>((ok, fail) => {
-			this.log(`Building ${this.origin_folder} ...`);
+	private async build(lib_folders?: string[]) {
+		this.log(`Building ${this.origin_folder} ...`);
 
-			if (this.flags["nx-target"]) {
-				this.nxCommandGenerator(lib_folders as string[])
-				    .then((commands) => {
-					    Promise.all(commands.map((command) => {
-						    return this.plainBuild(
-							    () => { /* no op */ },
-							    () => { /* no op */ },
-							    [
-								    "npx",
-								    command,
-							    ],
-						    );
-					    })).then(() => ok())
-					           .catch(fail);
-				    });
-			}
-			else {
-				this.plainBuild(
-					ok,
-					fail,
+		if (this.flags["nx-target"]) {
+			const commands = await this.nxCommandGenerator(lib_folders as string[]);
+
+			for (const command of commands) {
+				// eslint-disable-next-line no-await-in-loop
+				await this.plainBuild(
 					[
-						"tsc",
-						[],
+						"npx",
+						command,
 					],
 				);
 			}
-		});
+		}
+		else {
+			await this.plainBuild(
+				[
+					"tsc",
+					[],
+				],
+			);
+		}
 	}
 
 	/**
