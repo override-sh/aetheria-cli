@@ -133,7 +133,7 @@ export class Publish extends BaseCommand<typeof Publish> {
 
 		// run common operations for all libraries in parallel
 		const [ , latest_commit, greatest_release ] = await parallelize(
-			this.build(),
+			this.build(lib_folders),
 			this.getLatestCommitOrFail(),
 			this.findGreatestRelease(lib_folders),
 		);
@@ -251,7 +251,7 @@ export class Publish extends BaseCommand<typeof Publish> {
 		// run the build process if needed
 		let build: Promise<void> | undefined;
 		if (override?.build ?? this.flags.build) {
-			build = this.build(dirname(target));
+			build = this.build([ dirname(target).split("/").at(-1) || "" ]);
 		}
 
 		// get the latest commit and define the reference commit if not already defined
@@ -472,67 +472,137 @@ export class Publish extends BaseCommand<typeof Publish> {
 		this.log(`New version is ${pjson.version}`);
 	}
 
-	private async inferNxTarget(origin_folder: string) {
+	/**
+	 * Infer the nx target from the project.json file
+	 * @param {string[]} lib_folders The lib folders
+	 * @returns {Promise<[string, string, string][]>} A promise that resolves with the nx targets in the format [nx,
+	 *     run, target-build-command]
+	 * @private
+	 */
+	private async inferNxTarget(lib_folders: string[]) {
 		this.log("Inferring nx target ...");
 
-		console.log(this.origin_folder);
-		console.log(origin_folder);
-		process.exit(1);
+		const nx_targets = (await parallelize(...lib_folders.map(async (lib_folder): Promise<string | null> => {
+			const project_json = JSON.parse(await readFile(
+				resolve(this.origin_folder, lib_folder, "project.json"),
+				"utf-8",
+			)) as Record<string, any>;
+
+			if (project_json.name) {
+				return project_json.name;
+			}
+
+			return null;
+		}))).filter((value) => value !== null) as string[];
+
+		return nx_targets.map((nx_target) => {
+			return [
+				"nx",
+				"run",
+				`${nx_target}:build:production`,
+			];
+		});
+	}
+
+	/**
+	 * Generate the commands to execute when running in nx monorepo mode
+	 * @param {string[]} lib_folders The lib folders
+	 * @returns {Promise<[string, string, string][] | string[][]>} A promise that resolves with the commands to execute
+	 * @private
+	 */
+	private async nxCommandGenerator(lib_folders: string[]) {
+		if (this.flags["nx-target"] !== "-") {
+			return [
+				[
+					"nx",
+					"run",
+					`${this.flags["nx-target"]}:build:production`,
+				],
+			];
+		}
+
+		return this.inferNxTarget(lib_folders as string[]);
+	}
+
+	/**
+	 * Build a single project
+	 * @param {(value: (void | PromiseLike<void>)) => void} ok The resolve function
+	 * @param {(reason?: any) => void} fail The reject function
+	 * @param {[string, string[]]} command The command to execute
+	 * @returns {void} Nothing
+	 * @private
+	 */
+	private plainBuild(
+		ok: (value: (void | PromiseLike<void>)) => void,
+		fail: (reason?: any) => void,
+		command: [ string, string[] ],
+	) {
+		const child = spawn(command[0], command[1], { cwd: this.origin_folder });
+
+		child.stdout.on("data", (data) => {
+			if (this.flags.debug) {
+				this.warn(data.toString());
+			}
+		});
+
+		child.stderr.on("data", (data) => {
+			if (this.flags.debug) {
+				this.warn(data.toString());
+			}
+		});
+
+		child.on("error", (err) => {
+			this.safeError(err);
+		});
+
+		child.on("close", (code) => {
+			if (code === 0) {
+				this.log("Build successfully");
+				ok();
+			}
+			else {
+				this.safeError(`Build failed with code ${code}`);
+				fail();
+			}
+		});
 	}
 
 	/**
 	 * Build the project using tsc
-	 * @param origin_folder The origin folder
 	 * @returns {Promise<void>} A promise that resolves when the project is built
 	 * @private
+	 * @param lib_folders  The lib folders
 	 */
-	private build(origin_folder?: string) {
+	private build(lib_folders?: string[]) {
 		return new Promise<void>((ok, fail) => {
-			this.log(`Building ${origin_folder ?? this.origin_folder} ...`);
+			this.log(`Building ${this.origin_folder} ...`);
 
-			const cmd: [ string, string[] ] = this.flags["nx-target"]
-				? [
-					"npx",
+			if (this.flags["nx-target"]) {
+				this.nxCommandGenerator(lib_folders as string[])
+				    .then((commands) => {
+					    Promise.all(commands.map((command) => {
+						    return this.plainBuild(
+							    () => { /* no op */ },
+							    () => { /* no op */ },
+							    [
+								    "npx",
+								    command,
+							    ],
+						    );
+					    })).then(() => ok())
+					           .catch(fail);
+				    });
+			}
+			else {
+				this.plainBuild(
+					ok,
+					fail,
 					[
-						"nx",
-						"run",
-						`${this.flags["nx-target"] !== "-"
-							? this.flags["nx-target"]
-							: this.inferNxTarget(origin_folder as string)}:build:production`,
+						"tsc",
+						[],
 					],
-				]
-				: [
-					"tsc",
-					[],
-				];
-			const child = spawn(cmd[0], cmd[1], { cwd: this.origin_folder });
-
-			child.stdout.on("data", (data) => {
-				if (this.flags.debug) {
-					this.warn(data.toString());
-				}
-			});
-
-			child.stderr.on("data", (data) => {
-				if (this.flags.debug) {
-					this.warn(data.toString());
-				}
-			});
-
-			child.on("error", (err) => {
-				this.safeError(err);
-			});
-
-			child.on("close", (code) => {
-				if (code === 0) {
-					this.log("Build successfully");
-					ok();
-				}
-				else {
-					this.safeError(`Build failed with code ${code}`);
-					fail();
-				}
-			});
+				);
+			}
 		});
 	}
 
