@@ -1,7 +1,7 @@
 import { Flags } from "@oclif/core";
 import { Dirent } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { BaseCommand } from "../../base";
 
 export class MapDependencies extends BaseCommand<typeof MapDependencies> {
@@ -89,7 +89,7 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 			return;
 		}
 
-		const tsconfig_dir = this.flags.tsconfig.replace("tsconfig.json", "");
+		const tsconfig_dir = dirname(this.flags.tsconfig);
 
 		await Promise.all(
 			Object.keys(this.tsconfig_paths).map(async (local_dependency) => {
@@ -103,7 +103,7 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 					await readFile(
 						resolve(
 							tsconfig_dir,
-							resolution_path.replace("/src", ""),
+							dirname(resolution_path.replace("/src", "")),
 							"package.json",
 						),
 						"utf-8",
@@ -134,7 +134,7 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 			return deps;
 		}
 
-		const tsconfig_dir = this.flags.tsconfig.replace("tsconfig.json", "");
+		const tsconfig_dir = dirname(this.flags.tsconfig);
 		const tsconfig = JSON.parse(await readFile(this.flags.tsconfig, "utf-8"));
 		this.tsconfig_paths = tsconfig?.compilerOptions?.paths || {};
 
@@ -148,7 +148,7 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 					await readFile(
 						resolve(
 							tsconfig_dir,
-							resolution_path.replace("/src", ""),
+							dirname(resolution_path.replace("/src", "")),
 							"package.json",
 						),
 						"utf-8",
@@ -243,5 +243,25 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 			this.logDebug("Found typescript files, adding tslib");
 			dependencies.add("tslib");
 		}
+
+		// Transform the dependencies to remove eventually path definition after dependency name
+		const transformed_deps = this.transformDependencies(dependencies);
+		dependencies.clear();
+		transformed_deps.forEach((dep) => dependencies.add(dep));
+	}
+
+	private transformDependencies(dependencies: Set<string>) {
+		return [ ...dependencies.values() ].map((dependency) => {
+			const dep_parts = dependency.split("/");
+			const dep = dep_parts[0];
+
+			// If the dependency is scoped, take the first two parts (scope and name)
+			if (dep.startsWith("@") && dep_parts.length >= 2) {
+				return `${dep}/${dep_parts[1]}`;
+			}
+
+			// if the dependency is global trim everything after the first /
+			return dep;
+		});
 	}
 }
