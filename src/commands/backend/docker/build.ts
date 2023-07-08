@@ -16,7 +16,7 @@ export class Build extends BaseCommand<typeof Build> {
 	static flags = {
 		...BaseCommand.flags,
 		headless_folder: Flags.string({
-			char:        "H",
+			char:        "f",
 			description: "The folder where the headless backend is located",
 		}),
 		build:           Flags.boolean({
@@ -25,7 +25,7 @@ export class Build extends BaseCommand<typeof Build> {
 			allowNo:     true,
 		}),
 		publish:         Flags.boolean({
-			description: "Whether to build the source code before building the image",
+			description: "Whether to publish the image",
 			default:     true,
 			allowNo:     true,
 		}),
