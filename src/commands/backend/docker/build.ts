@@ -1,7 +1,7 @@
 import { Args, Flags } from "@oclif/core";
 import { spawn } from "node:child_process";
 import { cp, readdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, basename } from "node:path";
 import { BaseCommand } from "../../../base";
 import { parallelize } from "../../../helpers";
 import semver = require("semver/preload");
@@ -54,6 +54,7 @@ export class Build extends BaseCommand<typeof Build> {
 		}
 
 		await this.copyDistributionFiles();
+    await this.copySupportFiles();
 		await this.cloneRootNestDependencies();
 
 		await this.buildImage();
@@ -169,6 +170,31 @@ export class Build extends BaseCommand<typeof Build> {
 
 		this.log("Root @nestjs dependencies cloned successfully");
 	}
+
+  private async copySupportFiles() {
+    this.log("Copying support files ...");
+
+    const files = [
+      resolve(this.flags.headless_folder as string, "tailwind.css"),
+      resolve(this.flags.headless_folder as string, "tailwind.config.js"),
+      resolve(this.flags.headless_folder as string, "postcss.config.js"),
+    ];
+
+    await parallelize(...files.map(async (file) => {
+      this.logDebug(`Copying ${file} to ${this.args.image}/${basename(file)}`);
+
+      return cp(
+        file,
+        resolve(
+          this.docker_folder,
+          "dist",
+          basename(file),
+        ),
+      );
+    }));
+
+    this.log("Distribution files copied successfully");
+  }
 
 	private async copyDistributionFiles() {
 		this.log("Copying distribution files ...");
