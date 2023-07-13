@@ -1,8 +1,8 @@
 import { bootstrap, TemplateService, UserService } from "@aetheria/common";
 import { Args } from "@oclif/core";
 import { readFile } from "node:fs/promises";
-import { BaseCommand } from "../../base";
-import { parallelize } from "../../helpers";
+import { BaseCommand } from "../base";
+import { parallelize } from "../helpers";
 
 interface SeedFile {
 	$schema: string;
@@ -15,7 +15,12 @@ interface SeedFile {
 export class Seed extends BaseCommand<typeof Seed> {
 	static summary = "Seed the database";
 
-	static examples = [ "<%= config.bin %> <%= command.id %>" ];
+	static examples = [
+		{
+			command:     "<%= config.bin %> <%= command.id %> ../headless/aetheria.seed.json",
+			description: "Seed the database with the data from the file ../headless/aetheria.seed.json",
+		},
+	];
 
 	static flags = {
 		...BaseCommand.flags,
@@ -50,6 +55,11 @@ export class Seed extends BaseCommand<typeof Seed> {
 		this.log("Seeding completed successfully");
 	}
 
+	/**
+	 * Require missing arguments
+	 * @returns {Promise<void>}
+	 * @private
+	 */
 	private async requireMissingArguments() {
 		const inquirer = require("inquirer");
 
@@ -67,6 +77,11 @@ export class Seed extends BaseCommand<typeof Seed> {
 		}
 	}
 
+	/**
+	 * Read the seed file
+	 * @returns {Promise<SeedFile>}
+	 * @private
+	 */
 	private async readSeedFile() {
 		return JSON.parse(await readFile(this.args.seed as string, "utf-8")) as SeedFile;
 	}

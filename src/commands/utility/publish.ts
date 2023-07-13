@@ -297,6 +297,12 @@ export class Publish extends BaseCommand<typeof Publish> {
 		await this.publish(pjson, dist_folder);
 	}
 
+	/**
+	 * Ensure that there is at least one commit since the reference commit or ask the user if they want to continue
+	 * @param {LogResult} commit_history The commit history since the reference commit
+	 * @returns {Promise<void>} A promise that resolves when the user has answered the question
+	 * @private
+	 */
 	private async ensureEnoughCommitsOrContinue(commit_history: LogResult): Promise<void> {
 		if (commit_history.total === 0 && !this.flags.continue) {
 			// eslint-disable-next-line unicorn/prefer-module

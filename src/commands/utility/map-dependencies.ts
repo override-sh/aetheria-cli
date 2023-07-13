@@ -79,6 +79,11 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 		);
 	}
 
+	/**
+	 * Verify if the package.json has a dependency on itself or recursively depends on another local project
+	 * @param {Set<string>} dependencies The dependencies to verify
+	 * @returns {Promise<void>} Void
+	 */
 	async verifyCircularDependency(dependencies: Set<string>) {
 		if (dependencies.has(this.target_package_json.name)) {
 			this.error(`Circular dependency detected, ${this.target_package_json.name} depends on itself`);
@@ -250,6 +255,12 @@ export class MapDependencies extends BaseCommand<typeof MapDependencies> {
 		transformed_deps.forEach((dep) => dependencies.add(dep));
 	}
 
+	/**
+	 * Transform the dependencies to remove eventually path definition after dependency name
+	 * @param {Set<string>} dependencies The dependencies to transform
+	 * @returns {string[]} The transformed dependencies
+	 * @private
+	 */
 	private transformDependencies(dependencies: Set<string>) {
 		return [ ...dependencies.values() ].map((dependency) => {
 			const dep_parts = dependency.split("/");
