@@ -34,10 +34,6 @@ developer looking to contribute code, a designer seeking to enhance the user exp
 and provide feedback, Aetheria welcomes your involvement. Together, let's redefine the possibilities of website
 creation and empower everyone to build exceptional online experiences.
 
-> **NOTE**<br>
-> Aetheria is currently under development, and its ambitious goals are driving the team to create a cutting-edge
-> solution, this means that it is currently unstable and that the underground API may change without prior
-> communication.
-> Stay tuned for updates, releases, and opportunities to get involved in shaping the future of content
-> management with Aetheria.
+## CLI
 
+Refer to the official [CLI documentation](https://aetheria-docs.override.sh/cli/) for the full details.
