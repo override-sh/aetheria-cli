@@ -19,7 +19,7 @@
 	"dependencies": {
 		"@aetheria/backend-interfaces": "^1.0.2",
 		"@aetheria/common": "^1.0.3",
-		"@aetheria/config": "^1.0.1",
+		"@aetheria/config": "^1.2.0",
 		"@aetheria/plugin-auth": "^1.0.0",
 		"@aetheria/plugin-tailwind-classes-builder": "^1.0.0",
 		"@nestjs/common": "^9.4.3",
@@ -32,7 +32,7 @@
 		"winston": "^3.9.0"
 	},
 	"devDependencies": {
-		"@oclif/test": "^2.3.23",
+		"@oclif/test": "^2.3.27",
 		"@types/chai": "^4",
 		"@types/inquirer": "^9.0.3",
 		"@types/node": "^20.3.2",
