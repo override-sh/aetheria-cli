@@ -515,7 +515,7 @@ export class Build extends BaseCommand<typeof Build> {
 				type:    "list",
 				name:    "project",
 				message: "Which project should be built?",
-				options: [
+				choices: [
 					"backend",
 					"frontend",
 				],
