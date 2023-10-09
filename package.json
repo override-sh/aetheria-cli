@@ -23,7 +23,7 @@
 		"@aetheria/plugin-auth": "^1.0.0",
 		"@aetheria/plugin-tailwind-classes-builder": "^1.0.0",
 		"@nestjs/common": "^9.4.3",
-		"@oclif/core": "^2",
+		"@oclif/core": "^3",
 		"@oclif/plugin-help": "^5",
 		"cli-table3": "^0.6.3",
 		"inquirer": "^8.2.5",
